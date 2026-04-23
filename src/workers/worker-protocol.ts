@@ -82,4 +82,5 @@ export type WorkerEvent =
   | { type: 'ftpMetadataProgress'; progress: FtpMetadataProgressEvent }
   | { type: 'ftpMetadataResult'; json: string; crcValid: boolean }
   | { type: 'ftpMetadataError'; error: string }
-  | { type: 'writeBytes'; data: Uint8Array };
+  | { type: 'writeBytes'; data: Uint8Array }
+  | { type: 'heartbeat'; baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number };

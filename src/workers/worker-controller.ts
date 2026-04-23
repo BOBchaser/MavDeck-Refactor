@@ -518,6 +518,19 @@ export class WorkerController {
           componentId: msg.componentId,
           lastHeartbeatMs: Date.now(),
         };
+        const baseMode = msg.values['base_mode'] as number ?? 0;
+        const customMode = msg.values['custom_mode'] as number ?? 0;
+        const systemStatus = msg.values['system_status'] as number ?? 0;
+        const mavType = msg.values['type'] as number ?? 0;
+        const autopilot = msg.values['autopilot'] as number ?? 0;
+        this.postEvent({
+          type: 'heartbeat',
+          baseMode,
+          customMode,
+          systemStatus,
+          mavType,
+          autopilot,
+        });
       }
     });
 

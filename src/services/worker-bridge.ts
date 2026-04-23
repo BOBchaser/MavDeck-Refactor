@@ -60,6 +60,7 @@ export class MavlinkWorkerBridge {
   private readonly ftpMetadataErrorEmitter = new EventEmitter<(error: string) => void>();
   private readonly ftpMetadataProgressEmitter = new EventEmitter<(progress: FtpMetadataProgressEvent) => void>();
   private readonly writeBytesEmitter = new EventEmitter<(data: Uint8Array) => void>();
+  private readonly heartbeatEmitter = new EventEmitter<(data: { baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number }) => void>();
   private initResolve: (() => void) | null = null;
   private lastUpdate: Map<string, { timestamps: Float64Array; values: Float64Array }> | null = null;
 
@@ -263,6 +264,11 @@ export class MavlinkWorkerBridge {
     return this.writeBytesEmitter.on(callback);
   }
 
+  /** Subscribe to HEARTBEAT message events. */
+  onHeartbeat(callback: (data: { baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number }) => void): () => void {
+    return this.heartbeatEmitter.on(callback);
+  }
+
   /** Terminate the worker. */
   dispose(): void {
     this.worker.terminate();
@@ -393,6 +399,17 @@ export class MavlinkWorkerBridge {
 
       case 'writeBytes': {
         this.writeBytesEmitter.emit(msg.data);
+        break;
+      }
+
+      case 'heartbeat': {
+        this.heartbeatEmitter.emit({
+          baseMode: msg.baseMode,
+          customMode: msg.customMode,
+          systemStatus: msg.systemStatus,
+          mavType: msg.mavType,
+          autopilot: msg.autopilot,
+        });
         break;
       }
 

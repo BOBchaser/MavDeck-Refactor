@@ -57,6 +57,12 @@ export interface AppState {
   connectedBaudRate: BaudRate | null;
   throughputBytesPerSec: number;
   updateAvailable: boolean;
+  // Vehicle status from HEARTBEAT
+  flightMode: string;
+  armedState: 'disarmed' | 'armed' | 'unknown';
+  mavType: number;
+  autopilotType: number;
+  systemStatus: number;
 }
 
 export function createInitialAppState(): AppState {
@@ -111,6 +117,11 @@ export function createInitialAppState(): AppState {
     connectedBaudRate: null,
     throughputBytesPerSec: 0,
     updateAvailable: false,
+    flightMode: 'Disconnected',
+    armedState: 'unknown',
+    mavType: 0,
+    autopilotType: 0,
+    systemStatus: 0,
   };
 }
 

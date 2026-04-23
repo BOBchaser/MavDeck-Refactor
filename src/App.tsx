@@ -4,6 +4,7 @@ import Toolbar from './components/Toolbar';
 import TelemetryView from './components/TelemetryView';
 import MapView from './components/MapView';
 import ParametersView from './components/ParametersView';
+import FlightStatusPanel from './components/FlightStatusPanel';
 import StatusBar from './components/StatusBar';
 import HelpOverlay from './components/HelpOverlay';
 import DebugConsole from './components/DebugConsole';
@@ -53,6 +54,7 @@ function AppContent(props: AppContentProps) {
   return (
     <div class="flex flex-col h-screen" style={{ 'background-color': 'var(--bg-primary)' }}>
       <Toolbar onSelectTab={handleSelectTab} />
+      <FlightStatusPanel />
       <main class="flex-1 overflow-hidden">
         <Show when={appState.activeTab === 'telemetry'}>
           <TelemetryView />

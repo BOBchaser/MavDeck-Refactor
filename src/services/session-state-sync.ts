@@ -28,6 +28,11 @@ export function bindSessionState(
         setAppState('isPaused', false);
         setAppState('probeStatus', null);
         setAppState('throughputBytesPerSec', 0);
+        setAppState('flightMode', 'Disconnected');
+        setAppState('armedState', 'unknown');
+        setAppState('systemStatus', 0);
+        setAppState('mavType', 0);
+        setAppState('autopilotType', 0);
       }
     });
   });

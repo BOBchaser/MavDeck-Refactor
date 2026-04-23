@@ -6,3 +6,4 @@ export * from './frame-parser';
 export * from './decoder';
 export * from './frame-builder';
 export * from './xml-parser';
+export * from './px4-mode-decoder';

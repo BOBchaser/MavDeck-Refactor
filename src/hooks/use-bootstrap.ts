@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, type Accessor, type Setter } from 'solid-js';
+import { batch, createSignal, onCleanup, onMount, type Accessor, type Setter } from 'solid-js';
 import { applySettingsToAppState, setAppState } from '../store';
 import {
   MavlinkWorkerBridge,
@@ -22,6 +22,7 @@ import {
 } from '../services';
 import { MavlinkMetadataRegistry } from '../mavlink/registry';
 import { bindSessionState } from '../services/session-state-sync';
+import { decodePx4FlightMode, isArmedFromBaseMode } from '../mavlink/px4-mode-decoder';
 
 interface BootstrapResult {
   loading: Accessor<boolean>;
@@ -45,6 +46,7 @@ export function useBootstrap(): BootstrapResult {
   let unsubLoadComplete: (() => void) | undefined;
   let unsubThroughput: (() => void) | undefined;
   let unsubSessionState: (() => void) | undefined;
+  let unsubHeartbeat: (() => void) | undefined;
 
   onMount(async () => {
     try {
@@ -130,6 +132,17 @@ export function useBootstrap(): BootstrapResult {
       unsubThroughput = bridge.onThroughput(bps => {
         setAppState('throughputBytesPerSec', bps);
       });
+      unsubHeartbeat = bridge.onHeartbeat(({ baseMode, customMode, systemStatus, mavType, autopilot }) => {
+        const modeName = decodePx4FlightMode(baseMode, customMode);
+        const armed = isArmedFromBaseMode(baseMode);
+        batch(() => {
+          setAppState('flightMode', modeName);
+          setAppState('armedState', armed ? 'armed' : 'disarmed');
+          setAppState('systemStatus', systemStatus);
+          setAppState('mavType', mavType);
+          setAppState('autopilotType', autopilot);
+        });
+      });
       setRuntimeServices({
         workerBridge: bridge,
         connectionManager: connMgr,
@@ -149,6 +162,7 @@ export function useBootstrap(): BootstrapResult {
   });
 
   onCleanup(() => {
+    unsubHeartbeat?.();
     unsubThroughput?.();
     unsubSessionState?.();
     unsubLogViewer?.();

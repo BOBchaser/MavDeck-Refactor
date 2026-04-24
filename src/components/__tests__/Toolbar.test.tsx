@@ -31,6 +31,18 @@ vi.mock('../InstallPrompt', () => ({
   default: () => null,
 }));
 
+vi.mock('../ArmDisarmButton', () => ({
+  default: () => null,
+}));
+
+vi.mock('../FlightModeSelector', () => ({
+  default: () => null,
+}));
+
+vi.mock('../GuidedActionsStrip', () => ({
+  default: () => null,
+}));
+
 describe('Toolbar', () => {
   beforeEach(() => {
     backend = 'native';

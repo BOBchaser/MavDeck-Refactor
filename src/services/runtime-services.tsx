@@ -4,6 +4,7 @@ import type { ConnectionManager } from './connection-manager';
 import type { LogViewerService } from './log-viewer-service';
 import type { SerialSessionController } from './serial-session-controller';
 import type { MavlinkWorkerBridge } from './worker-bridge';
+import type { CommandSender } from './command-sender';
 
 export interface RuntimeServices {
   workerBridge: MavlinkWorkerBridge;
@@ -11,6 +12,7 @@ export interface RuntimeServices {
   registry: MavlinkMetadataRegistry;
   logViewerService: LogViewerService;
   serialSessionController: SerialSessionController;
+  commandSender: CommandSender;
 }
 
 const RuntimeServicesContext = createContext<RuntimeServices>();
@@ -51,4 +53,8 @@ export function useLogViewerService(): LogViewerService {
 
 export function useSerialSessionController(): SerialSessionController {
   return useRuntimeServices().serialSessionController;
+}
+
+export function useCommandSender(): CommandSender {
+  return useRuntimeServices().commandSender;
 }

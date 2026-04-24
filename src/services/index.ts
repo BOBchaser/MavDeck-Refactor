@@ -89,6 +89,7 @@ export {
   useRegistry,
   useLogViewerService,
   useSerialSessionController,
+  useCommandSender,
   type RuntimeServices,
 } from './runtime-services';
 export { serializePlotTabs, deserializePlotTabs, type PersistedPlotTabV1, type PersistedPlotV1, type PersistedPlotSignalV1 } from './layout-persistence';
@@ -98,6 +99,25 @@ export {
   type ConnectionStatus,
   type StatusTextEntry,
 } from './worker-bridge';
+export {
+  CommandSender,
+  MAV_CMD_COMPONENT_ARM_DISARM,
+  MAV_CMD_DO_SET_MODE,
+  MAV_CMD_NAV_TAKEOFF,
+  MAV_CMD_NAV_LAND,
+  MAV_CMD_NAV_RETURN_TO_LAUNCH,
+  MAV_CMD_DO_REPOSITION,
+  MAV_RESULT_ACCEPTED,
+  type CommandResult,
+  type CommandAckEntry,
+} from './command-sender';
+export {
+  addToast,
+  removeToast,
+  onToastChange,
+  clearAllToasts,
+  type ToastEntry,
+} from './toast-service';
 export {
   DEBUG_CONSOLE_SOURCES,
   DEBUG_CONSOLE_SOURCE_LABELS,

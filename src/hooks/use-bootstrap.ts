@@ -17,6 +17,7 @@ import {
   logDebugError,
   logDebugInfo,
   logDebugWarn,
+  CommandSender,
   type RuntimeServices,
   type MavDeckSettings,
 } from '../services';
@@ -143,12 +144,15 @@ export function useBootstrap(): BootstrapResult {
           setAppState('autopilotType', autopilot);
         });
       });
+      const commandSender = new CommandSender(bridge);
+
       setRuntimeServices({
         workerBridge: bridge,
         connectionManager: connMgr,
         registry: reg,
         logViewerService: logViewerSvc,
         serialSessionController: serialController,
+        commandSender,
       });
 
       setAppState('isReady', true);

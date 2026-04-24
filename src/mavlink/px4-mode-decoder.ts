@@ -69,7 +69,7 @@ export function decodePx4CustomModeComponents(customMode: number): {
  * @returns mode name, or "Unknown" if custom mode bit is not set
  */
 export function decodePx4FlightMode(baseMode: number, customMode: number): string {
-  const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 0x80;
+  const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 0x01;
 
   if ((baseMode & MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) === 0) {
     return 'Unknown';

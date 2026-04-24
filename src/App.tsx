@@ -8,6 +8,8 @@ import FlightStatusPanel from './components/FlightStatusPanel';
 import StatusBar from './components/StatusBar';
 import HelpOverlay from './components/HelpOverlay';
 import DebugConsole from './components/DebugConsole';
+import ToastContainer from './components/ToastContainer';
+import CommandAckToast from './components/CommandAckToast';
 import { appState, setAppState } from './store';
 import {
   useBootstrap,
@@ -69,6 +71,8 @@ function AppContent(props: AppContentProps) {
       <DebugConsole />
       <StatusBar />
       <HelpOverlay />
+      <ToastContainer />
+      <CommandAckToast />
     </div>
   );
 }

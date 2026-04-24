@@ -33,7 +33,7 @@ describe('decodePx4FlightMode', () => {
   });
 
   it('decodes all known pure main modes', () => {
-    const base = 0x80; // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+    const base = 0x81; // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
     expect(decodePx4FlightMode(base, 0x00010000)).toBe('Manual');
     expect(decodePx4FlightMode(base, 0x00070000)).toBe('Stabilized');
     expect(decodePx4FlightMode(base, 0x00050000)).toBe('Acro');
@@ -44,7 +44,7 @@ describe('decodePx4FlightMode', () => {
   });
 
   it('decodes all known auto sub-modes', () => {
-    const base = 0x80;
+    const base = 0x81;
     expect(decodePx4FlightMode(base, 0x01040000)).toBe('Ready');
     expect(decodePx4FlightMode(base, 0x02040000)).toBe('Takeoff');
     expect(decodePx4FlightMode(base, 0x03040000)).toBe('Hold');
@@ -57,19 +57,19 @@ describe('decodePx4FlightMode', () => {
   });
 
   it('decodes posctl sub-modes', () => {
-    const base = 0x80;
+    const base = 0x81;
     expect(decodePx4FlightMode(base, 0x00030000)).toBe('Position');
     expect(decodePx4FlightMode(base, 0x01030000)).toBe('Orbit');
   });
 
   it('returns formatted unknown for unrecognized custom modes', () => {
-    expect(decodePx4FlightMode(0x80, 0xdeadbeef)).toBe('Unknown 128:3735928559');
+    expect(decodePx4FlightMode(0x81, 0xdeadbeef)).toBe('Unknown 129:3735928559');
   });
 });
 
 describe('decodePx4ModeInfo', () => {
   it('returns structured info for a known mode', () => {
-    expect(decodePx4ModeInfo(0x80, 0x04040000)).toEqual({
+    expect(decodePx4ModeInfo(0x81, 0x04040000)).toEqual({
       mainMode: 4,
       subMode: 4,
       modeName: 'Mission',
@@ -93,7 +93,7 @@ describe('PX4_SETTABLE_MODES', () => {
   it('contains only modes that QGC considers settable', () => {
     // Verify all entries have known mode names
     for (const mode of PX4_SETTABLE_MODES) {
-      expect(decodePx4FlightMode(0x80, mode.customMode)).toBe(mode.name);
+      expect(decodePx4FlightMode(0x81, mode.customMode)).toBe(mode.name);
     }
   });
 

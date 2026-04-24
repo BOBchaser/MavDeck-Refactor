@@ -4,7 +4,13 @@
       "Bash(mkdir -p \"/Users/zhengguo/.claude/projects/-Users-zhengguo-Desktop-taiyi----MavDeck-MavDeck-main/memory/mavdeck-docs\")",
       "Read(//Users/zhengguo/Desktop/taiyi/重构/MavDeck/PX4-Autopilot-main/src/modules/mavlink/**)",
       "Read(//Users/zhengguo/Desktop/taiyi/重构/MavDeck/PX4-Autopilot-main/src/modules/rover_differential/**)",
-      "Read(//Users/zhengguo/Desktop/taiyi/重构/MavDeck/PX4-Autopilot-main/src/lib/events/**)"
+      "Read(//Users/zhengguo/Desktop/taiyi/重构/MavDeck/PX4-Autopilot-main/src/lib/events/**)",
+      "Read(//Users/zhengguo/Desktop/taiyi/重构/MavDeck/PX4-Autopilot-main/.claude/px4-docs/**)",
+      "Bash(npm run *)",
+      "Bash(npx vitest *)"
+    ],
+    "additionalDirectories": [
+      "/Users/zhengguo/Desktop/taiyi/重构/MavDeck/qgroundcontrol-master/.claude/qgc-docs"
     ]
   }
 }

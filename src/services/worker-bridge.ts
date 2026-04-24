@@ -61,6 +61,7 @@ export class MavlinkWorkerBridge {
   private readonly ftpMetadataProgressEmitter = new EventEmitter<(progress: FtpMetadataProgressEvent) => void>();
   private readonly writeBytesEmitter = new EventEmitter<(data: Uint8Array) => void>();
   private readonly heartbeatEmitter = new EventEmitter<(data: { baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number }) => void>();
+  private readonly commandAckEmitter = new EventEmitter<(ack: { correlationId: number; success: boolean; result?: number; error?: string }) => void>();
   private initResolve: (() => void) | null = null;
   private lastUpdate: Map<string, { timestamps: Float64Array; values: Float64Array }> | null = null;
 
@@ -269,6 +270,16 @@ export class MavlinkWorkerBridge {
     return this.heartbeatEmitter.on(callback);
   }
 
+  /** Send a MAVLink command (COMMAND_LONG or COMMAND_INT) to the vehicle. */
+  sendCommand(messageName: 'COMMAND_LONG' | 'COMMAND_INT', fields: Record<string, number>, correlationId: number): void {
+    this.postCommand({ type: 'sendCommand', messageName, fields, correlationId });
+  }
+
+  /** Subscribe to command ACK events. */
+  onCommandAck(callback: (ack: { correlationId: number; success: boolean; result?: number; error?: string }) => void): () => void {
+    return this.commandAckEmitter.on(callback);
+  }
+
   /** Terminate the worker. */
   dispose(): void {
     this.worker.terminate();
@@ -409,6 +420,16 @@ export class MavlinkWorkerBridge {
           systemStatus: msg.systemStatus,
           mavType: msg.mavType,
           autopilot: msg.autopilot,
+        });
+        break;
+      }
+
+      case 'commandAck': {
+        this.commandAckEmitter.emit({
+          correlationId: msg.correlationId,
+          success: msg.success,
+          result: msg.result,
+          error: msg.error,
         });
         break;
       }

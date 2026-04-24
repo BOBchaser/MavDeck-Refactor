@@ -55,7 +55,8 @@ export type WorkerCommand =
   | { type: 'portsChanged' }
   | { type: 'paramRequestAll' }
   | { type: 'paramSet'; paramId: string; value: number }
-  | { type: 'ftpDownloadMetadata' };
+  | { type: 'ftpDownloadMetadata' }
+  | { type: 'sendCommand'; messageName: 'COMMAND_LONG' | 'COMMAND_INT'; fields: Record<string, number>; correlationId: number };
 
 // ---------------------------------------------------------------------------
 // Worker → Main thread events
@@ -83,4 +84,5 @@ export type WorkerEvent =
   | { type: 'ftpMetadataResult'; json: string; crcValid: boolean }
   | { type: 'ftpMetadataError'; error: string }
   | { type: 'writeBytes'; data: Uint8Array }
-  | { type: 'heartbeat'; baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number };
+  | { type: 'heartbeat'; baseMode: number; customMode: number; systemStatus: number; mavType: number; autopilot: number }
+  | { type: 'commandAck'; correlationId: number; success: boolean; result?: number; error?: string };

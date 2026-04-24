@@ -175,7 +175,7 @@ describe('SpoofByteSource', () => {
   });
 
   describe('HEARTBEAT decoding', () => {
-    it('decoded HEARTBEAT has type=2, autopilot=3, mavlink_version=3', async () => {
+    it('decoded HEARTBEAT has type=2, autopilot=12, mavlink_version=3', async () => {
       const messages = collectMessages();
       await source.connect();
 
@@ -184,8 +184,9 @@ describe('SpoofByteSource', () => {
       const heartbeat = messages.find((m) => m.name === 'HEARTBEAT');
       expect(heartbeat).toBeDefined();
       expect(heartbeat!.values['type']).toBe(2);
-      expect(heartbeat!.values['autopilot']).toBe(3);
-      expect(heartbeat!.values['base_mode']).toBe(0x81);
+      expect(heartbeat!.values['autopilot']).toBe(12);
+      // Initial state: armed=true, Position mode (main=3) → CUSTOM(0x01)|ARMED(0x80)|STAB(0x10)|GUIDED(0x08) = 0x99
+      expect(heartbeat!.values['base_mode']).toBe(0x99);
       expect(heartbeat!.values['system_status']).toBe(4);
       expect(heartbeat!.values['mavlink_version']).toBe(3);
     });
@@ -538,6 +539,184 @@ describe('SpoofByteSource', () => {
       await vi.advanceTimersByTimeAsync(50);
 
       expect(responses.length).toBe(0);
+    });
+  });
+
+  describe('command loopback', () => {
+    let frameBuilder: MavlinkFrameBuilder;
+
+    beforeEach(() => {
+      frameBuilder = new MavlinkFrameBuilder(registry);
+    });
+
+    function setupCommandTest() {
+      const responses: MavlinkMessage[] = [];
+      const responseParser = new MavlinkFrameParser(registry);
+      const responseDecoder = new MavlinkMessageDecoder(registry);
+      responseParser.onFrame(frame => {
+        const msg = responseDecoder.decode(frame);
+        if (msg) responses.push(msg);
+      });
+      source.onData(data => responseParser.parse(data));
+      return { responses };
+    }
+
+    it('responds to COMPONENT_ARM_DISARM with COMMAND_ACK and updates armed state', async () => {
+      const { responses } = setupCommandTest();
+      await source.connect();
+
+      // Disarm
+      const disarm = frameBuilder.buildFrame({
+        messageName: 'COMMAND_LONG',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 400, confirmation: 0,
+          param1: 0, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      await source.write(disarm);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const ack = responses.find(m => m.name === 'COMMAND_ACK');
+      expect(ack).toBeDefined();
+      expect(ack!.values.command).toBe(400);
+      expect(ack!.values.result).toBe(0);
+
+      // Next heartbeat should show disarmed
+      vi.advanceTimersByTime(1000);
+      const hbs = responses.filter(m => m.name === 'HEARTBEAT');
+      const lastHb = hbs[hbs.length - 1];
+      expect(lastHb.values.base_mode & 0x80).toBe(0);
+
+      // Re-arm
+      const arm = frameBuilder.buildFrame({
+        messageName: 'COMMAND_LONG',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 400, confirmation: 0,
+          param1: 1, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      responses.length = 0;
+      await source.write(arm);
+      await vi.advanceTimersByTimeAsync(50);
+      vi.advanceTimersByTime(1000);
+
+      const hbs2 = responses.filter(m => m.name === 'HEARTBEAT');
+      expect(hbs2[hbs2.length - 1].values.base_mode & 0x80).toBe(0x80);
+    });
+
+    it('responds to DO_SET_MODE with COMMAND_ACK and updates HEARTBEAT custom_mode', async () => {
+      const { responses } = setupCommandTest();
+      await source.connect();
+
+      const setMode = frameBuilder.buildFrame({
+        messageName: 'COMMAND_LONG',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 176, confirmation: 0,
+          param1: 0x01, param2: 0x00020000, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      await source.write(setMode);
+      await vi.advanceTimersByTimeAsync(50);
+      vi.advanceTimersByTime(1000);
+
+      const ack = responses.find(m => m.name === 'COMMAND_ACK');
+      expect(ack).toBeDefined();
+      expect(ack!.values.command).toBe(176);
+      expect(ack!.values.result).toBe(0);
+
+      const hbs = responses.filter(m => m.name === 'HEARTBEAT');
+      expect(hbs[hbs.length - 1].values.custom_mode).toBe(0x00020000);
+    });
+
+    it('responds to NAV_TAKEOFF with COMMAND_ACK and climbs to target altitude', async () => {
+      const { responses } = setupCommandTest();
+      await source.connect();
+
+      const takeoff = frameBuilder.buildFrame({
+        messageName: 'COMMAND_LONG',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 22, confirmation: 0,
+          param1: 0, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 100,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      await source.write(takeoff);
+      await vi.advanceTimersByTimeAsync(50);
+
+      const ack = responses.find(m => m.name === 'COMMAND_ACK');
+      expect(ack).toBeDefined();
+      expect(ack!.values.command).toBe(22);
+
+      // Advance 5 seconds: should have climbed significantly
+      vi.advanceTimersByTime(5000);
+      const gpis = responses.filter(m => m.name === 'GLOBAL_POSITION_INT');
+      const firstAlt = (gpis[0].values.relative_alt as number) / 1000;
+      const lastAlt = (gpis[gpis.length - 1].values.relative_alt as number) / 1000;
+      expect(lastAlt).toBeGreaterThan(firstAlt + 5);
+    });
+
+    it('responds to NAV_LAND with COMMAND_ACK and descends to ground', async () => {
+      const { responses } = setupCommandTest();
+      await source.connect();
+
+      const land = frameBuilder.buildFrame({
+        messageName: 'COMMAND_LONG',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 21, confirmation: 0,
+          param1: 0, param2: 0, param3: 0, param4: 0, param5: 0, param6: 0, param7: 0,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      await source.write(land);
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Advance 40 seconds to reach ground
+      vi.advanceTimersByTime(40000);
+
+      const gpis = responses.filter(m => m.name === 'GLOBAL_POSITION_INT');
+      const lastAlt = (gpis[gpis.length - 1].values.relative_alt as number) / 1000;
+      expect(lastAlt).toBeLessThanOrEqual(1);
+
+      const hbs = responses.filter(m => m.name === 'HEARTBEAT');
+      expect(hbs[hbs.length - 1].values.base_mode & 0x80).toBe(0);
+    });
+
+    it('responds to DO_REPOSITION with COMMAND_ACK and moves toward target', async () => {
+      const { responses } = setupCommandTest();
+      await source.connect();
+
+      // Let it cruise for 2 seconds to move away from home
+      vi.advanceTimersByTime(2000);
+      const gpisBefore = responses.filter(m => m.name === 'GLOBAL_POSITION_INT');
+      const latBefore = (gpisBefore[gpisBefore.length - 1].values.lat as number) / 1e7;
+
+      const reposition = frameBuilder.buildFrame({
+        messageName: 'COMMAND_INT',
+        values: {
+          target_system: 1, target_component: 1,
+          command: 192, frame: 0, current: 0, autocontinue: 0,
+          param1: -1, param2: 1, param3: 0, param4: 0,
+          x: Math.round(34.06 * 1e7), y: Math.round(-118.24 * 1e7), z: 80,
+        },
+        systemId: 255, componentId: 190, sequence: 0,
+      });
+      responses.length = 0;
+      await source.write(reposition);
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Advance 5 seconds toward target
+      vi.advanceTimersByTime(5000);
+      const gpisAfter = responses.filter(m => m.name === 'GLOBAL_POSITION_INT');
+      const latAfter = (gpisAfter[gpisAfter.length - 1].values.lat as number) / 1e7;
+      expect(Math.abs(latAfter - 34.06)).toBeLessThan(Math.abs(latBefore - 34.06));
     });
   });
 });

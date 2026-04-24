@@ -46,6 +46,7 @@ import {
 } from './mavlink-worker-pipeline-helpers';
 import { ThroughputMonitor } from './throughput-monitor';
 import { DataActivityMonitor } from './data-activity-monitor';
+import { CommandManager } from './command-manager';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,6 +70,7 @@ interface PipelineState {
   vehicleTrackUnsub: (() => void) | null;
   paramMessageUnsub: (() => void) | null;
   ftpMessageUnsub: (() => void) | null;
+  commandMessageUnsub: (() => void) | null;
   statusTextAssembly: StatusTextAssemblyState;
 }
 
@@ -132,6 +134,7 @@ export class WorkerController {
   // Connection state
   private paramManager: ParameterManager | null = null;
   private metadataDownloader: MetadataFtpDownloader | null = null;
+  private commandManager: CommandManager | null = null;
   private sendSequence = 0;
   private activeVehicle: VehicleIdentity | null = null;
 
@@ -152,6 +155,7 @@ export class WorkerController {
     vehicleTrackUnsub: null,
     paramMessageUnsub: null,
     ftpMessageUnsub: null,
+    commandMessageUnsub: null,
     statusTextAssembly: { partials: new Map() },
   };
 
@@ -486,6 +490,20 @@ export class WorkerController {
           });
         break;
       }
+
+      case 'sendCommand': {
+        if (!this.commandManager) {
+          this.postEvent({
+            type: 'commandAck',
+            correlationId: msg.correlationId,
+            success: false,
+            error: 'Not connected',
+          });
+          break;
+        }
+        this.commandManager.sendCommand(msg.messageName, msg.fields, msg.correlationId);
+        break;
+      }
     }
   }
 
@@ -563,6 +581,23 @@ export class WorkerController {
         this.metadataDownloader?.handleMessage(msg);
       }
     });
+
+    this.commandManager = new CommandManager(
+      (name, values) => this.sendMavlinkMessage(name, values),
+      () => this.getVehicleTarget(),
+    );
+    this.pipeline.commandMessageUnsub = this.pipeline.service.onMessage(msg => {
+      this.commandManager?.handleMessage(msg);
+    });
+    this.commandManager.onAck(ack => {
+      this.postEvent({
+        type: 'commandAck',
+        correlationId: ack.correlationId,
+        success: ack.success,
+        result: ack.result,
+        error: ack.error,
+      });
+    });
   }
 
   private resetPipelineConnection(): void {
@@ -579,10 +614,13 @@ export class WorkerController {
     this.pipeline.vehicleTrackUnsub = null;
     this.pipeline.paramMessageUnsub = null;
     this.pipeline.ftpMessageUnsub = null;
+    this.pipeline.commandMessageUnsub = null;
     this.paramManager?.dispose();
     this.paramManager = null;
     this.metadataDownloader?.dispose();
     this.metadataDownloader = null;
+    this.commandManager?.dispose();
+    this.commandManager = null;
   }
 
   private releasePipelineSubscriptions(): void {
@@ -593,6 +631,7 @@ export class WorkerController {
     this.pipeline.vehicleTrackUnsub?.();
     this.pipeline.paramMessageUnsub?.();
     this.pipeline.ftpMessageUnsub?.();
+    this.pipeline.commandMessageUnsub?.();
     this.pipeline.statsUnsub = null;
     this.pipeline.updateUnsub = null;
     this.pipeline.statustextUnsub = null;
@@ -600,6 +639,7 @@ export class WorkerController {
     this.pipeline.vehicleTrackUnsub = null;
     this.pipeline.paramMessageUnsub = null;
     this.pipeline.ftpMessageUnsub = null;
+    this.pipeline.commandMessageUnsub = null;
   }
 
   private async resetPipeline(options: { disconnectSource?: boolean } = {}): Promise<void> {

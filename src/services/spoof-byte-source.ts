@@ -2,8 +2,12 @@
  * Spoof byte source for testing without real MAVLink hardware.
  *
  * Generates realistic MAVLink telemetry frames at configurable rates.
- * Simulates a vehicle flying a figure-8 pattern over Los Angeles
+ * Simulates a PX4 vehicle flying a figure-8 pattern over Los Angeles
  * with realistic attitude, position, and system status updates.
+ *
+ * Enhanced to respond to incoming commands (arm/disarm, mode change,
+ * takeoff, land, RTL, reposition) so the full control loop can be tested
+ * in software without real hardware.
  */
 
 import type { ByteCallback, IByteSource } from './byte-source';
@@ -13,6 +17,7 @@ import { MavlinkMessageDecoder } from '../mavlink/decoder';
 import type { MavlinkMetadataRegistry } from '../mavlink/registry';
 import { SpoofParamResponder } from './spoof-param-responder';
 import { SpoofFtpResponder } from './spoof-ftp-responder';
+import { SpoofCommandResponder, type SpoofVehicleState } from './spoof-command-responder';
 
 /** Status text entries with severity levels. */
 const STATUS_MESSAGES: ReadonlyArray<readonly [number, string]> = [
@@ -40,6 +45,13 @@ const STATUS_MIN_DELAY_S = 3;
 /** Maximum STATUSTEXT interval in seconds. */
 const STATUS_MAX_DELAY_S = 8;
 
+/** PX4 AUTO sub-mode encodings (sub_mode << 24 | main_mode << 16). */
+const PX4_MODE_AUTO_TAKEOFF = 0x02040000;
+const PX4_MODE_AUTO_LOITER = 0x03040000;
+const PX4_MODE_AUTO_MISSION = 0x04040000;
+const PX4_MODE_AUTO_RTL = 0x05040000;
+const PX4_MODE_AUTO_LAND = 0x06040000;
+
 export class SpoofByteSource implements IByteSource {
   private readonly registry: MavlinkMetadataRegistry;
   private readonly frameBuilder: MavlinkFrameBuilder;
@@ -48,6 +60,7 @@ export class SpoofByteSource implements IByteSource {
   private readonly inboundDecoder: MavlinkMessageDecoder;
   private readonly paramResponder: SpoofParamResponder;
   private readonly ftpResponder: SpoofFtpResponder;
+  private readonly commandResponder: SpoofCommandResponder;
 
   private readonly systemId: number;
   private readonly componentId: number;
@@ -65,8 +78,8 @@ export class SpoofByteSource implements IByteSource {
   private simulationTime = 0;
   private latitude = 34.0522;
   private longitude = -118.2437;
-  private altitude = 75.0;     // Start in middle of [50, 100] range
-  private groundSpeed = 15.0;  // Start in middle of [5, 25] range
+  private altitude = 75.0;     // AMSL
+  private groundSpeed = 15.0;
   private heading = 0;
   private roll = 0;            // radians
   private pitch = 0;           // radians
@@ -74,6 +87,9 @@ export class SpoofByteSource implements IByteSource {
   private batteryVoltage = 12.6;
   private throttle = 50;
   private statusTextIndex = 0;
+
+  // PX4 vehicle state (shared with command responder)
+  private readonly vehicleState: SpoofVehicleState;
 
   constructor(
     registry: MavlinkMetadataRegistry,
@@ -86,11 +102,24 @@ export class SpoofByteSource implements IByteSource {
     this.systemId = systemId;
     this.componentId = componentId;
 
+    this.vehicleState = {
+      armed: true,
+      customMode: 0x00030000, // Position mode on startup
+      homeLat: this.latitude,
+      homeLon: this.longitude,
+      homeAlt: this.altitude,
+      targetAlt: this.altitude,
+      targetLat: this.latitude,
+      targetLon: this.longitude,
+      flightPhase: 'cruise',
+    };
+
     // Loopback pipeline: parse outbound frames, decode, dispatch to responders
     this.inboundParser = new MavlinkFrameParser(registry);
     this.inboundDecoder = new MavlinkMessageDecoder(registry);
     this.paramResponder = new SpoofParamResponder(registry, systemId, componentId);
     this.ftpResponder = new SpoofFtpResponder(registry, metadataJson, systemId, componentId);
+    this.commandResponder = new SpoofCommandResponder(registry, this.vehicleState, systemId, componentId);
 
     this.inboundParser.onFrame(frame => {
       const msg = this.inboundDecoder.decode(frame);
@@ -100,6 +129,7 @@ export class SpoofByteSource implements IByteSource {
       const responses = [
         ...this.paramResponder.handleMessage(msg),
         ...this.ftpResponder.handleMessage(msg),
+        ...this.commandResponder.handleMessage(msg),
       ];
 
       for (const responseFrame of responses) {
@@ -131,6 +161,14 @@ export class SpoofByteSource implements IByteSource {
     }
 
     this._isConnected = true;
+
+    // Reset home position on each connect
+    this.vehicleState.homeLat = this.latitude;
+    this.vehicleState.homeLon = this.longitude;
+    this.vehicleState.homeAlt = this.altitude;
+    this.vehicleState.targetLat = this.latitude;
+    this.vehicleState.targetLon = this.longitude;
+    this.vehicleState.targetAlt = this.altitude;
 
     // Fast telemetry at 10 Hz: ATTITUDE, GLOBAL_POSITION_INT, VFR_HUD
     this.fastTelemetryTimer = setInterval(
@@ -231,7 +269,7 @@ export class SpoofByteSource implements IByteSource {
       lat: Math.round(this.latitude * 1e7),
       lon: Math.round(this.longitude * 1e7),
       alt: Math.round(this.altitude * 1000),
-      relative_alt: Math.round(this.altitude * 1000),
+      relative_alt: Math.round((this.altitude - this.vehicleState.homeAlt) * 1000),
       vx: Math.round(this.groundSpeed * Math.cos(headingRad) * 100),
       vy: Math.round(this.groundSpeed * Math.sin(headingRad) * 100),
       vz: 0,
@@ -256,7 +294,7 @@ export class SpoofByteSource implements IByteSource {
       heading: Math.round(this.heading),
       throttle: this.throttle,
       alt: this.altitude,
-      climb: 0,
+      climb: this.computeClimbRate(),
     });
   }
 
@@ -289,9 +327,9 @@ export class SpoofByteSource implements IByteSource {
 
     this.emitMessage('HEARTBEAT', {
       type: 2,              // MAV_TYPE_QUADROTOR
-      autopilot: 3,         // MAV_AUTOPILOT_ARDUPILOTMEGA
-      base_mode: 0x81,
-      custom_mode: 0,
+      autopilot: 12,        // MAV_AUTOPILOT_PX4
+      base_mode: this.computeBaseMode(),
+      custom_mode: this.vehicleState.customMode,
       system_status: 4,     // MAV_STATE_ACTIVE
       mavlink_version: 3,
     });
@@ -326,29 +364,147 @@ export class SpoofByteSource implements IByteSource {
   // -------------------------------------------------------------------
 
   private updateSimulationState(timeInSeconds: number): void {
-    // Altitude random walk bounded [50, 100]m
-    this.altitude += (Math.random() - 0.5) * 0.1;  // +-0.05
-    this.altitude = clamp(this.altitude, 50, 100);
+    const vs = this.vehicleState;
+
+    switch (vs.flightPhase) {
+      case 'takeoff':
+        this.updateTakeoff();
+        break;
+      case 'land':
+        this.updateLand();
+        break;
+      case 'rtl':
+        this.updateRTL();
+        break;
+      case 'hold':
+        this.updateHold();
+        break;
+      default:
+        this.updateCruise(timeInSeconds);
+        break;
+    }
+
+    // Yaw follows heading for all phases
+    this.yaw = this.heading * DEG_TO_RAD;
+  }
+
+  private updateTakeoff(): void {
+    const climbRate = 0.3; // 3 m/s at 10 Hz
+    if (this.altitude < this.vehicleState.targetAlt - 0.5) {
+      this.altitude += climbRate;
+      this.throttle = clamp(this.throttle + 2, 50, 100);
+    } else {
+      // Reached target — switch to Hold
+      this.vehicleState.flightPhase = 'hold';
+      this.vehicleState.customMode = PX4_MODE_AUTO_LOITER;
+      this.vehicleState.targetLat = this.latitude;
+      this.vehicleState.targetLon = this.longitude;
+      this.vehicleState.targetAlt = this.altitude;
+    }
+  }
+
+  private updateLand(): void {
+    const descentRate = 0.2; // 2 m/s at 10 Hz
+    const groundAlt = this.vehicleState.homeAlt;
+
+    if (this.altitude > groundAlt + 0.5) {
+      this.altitude -= descentRate;
+      this.throttle = clamp(this.throttle - 3, 10, 100);
+    } else {
+      // Touchdown
+      this.altitude = groundAlt;
+      this.groundSpeed = 0;
+      this.throttle = 0;
+      this.vehicleState.armed = false;
+      this.vehicleState.flightPhase = 'hold';
+      this.vehicleState.customMode = PX4_MODE_AUTO_LOITER;
+    }
+  }
+
+  private updateRTL(): void {
+    const vs = this.vehicleState;
+    const rtlCruiseAlt = Math.max(vs.homeAlt + 20, this.altitude);
+
+    // First climb to safe RTL altitude
+    if (this.altitude < rtlCruiseAlt - 0.5) {
+      this.altitude += 0.25;
+      this.throttle = 70;
+      return;
+    }
+
+    // Fly toward home
+    const dx = (vs.homeLon - this.longitude) * METERS_PER_DEG_LAT * Math.cos(this.latitude * DEG_TO_RAD);
+    const dy = (vs.homeLat - this.latitude) * METERS_PER_DEG_LAT;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 10) {
+      const speed = 15; // m/s
+      this.groundSpeed = speed;
+      const desiredHeading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+      this.heading = smoothHeading(this.heading, desiredHeading);
+
+      const headingRad = this.heading * DEG_TO_RAD;
+      this.latitude += (speed * Math.cos(headingRad) * 0.1) / METERS_PER_DEG_LAT;
+      this.longitude += (speed * Math.sin(headingRad) * 0.1) / (METERS_PER_DEG_LAT * Math.cos(this.latitude * DEG_TO_RAD));
+      this.throttle = 60;
+    } else {
+      // Arrived at home — start landing
+      this.vehicleState.flightPhase = 'land';
+      this.vehicleState.customMode = PX4_MODE_AUTO_LAND;
+    }
+  }
+
+  private updateHold(): void {
+    const vs = this.vehicleState;
+    const dx = (vs.targetLon - this.longitude) * METERS_PER_DEG_LAT * Math.cos(this.latitude * DEG_TO_RAD);
+    const dy = (vs.targetLat - this.latitude) * METERS_PER_DEG_LAT;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // Vertical guidance
+    const altError = vs.targetAlt - this.altitude;
+    if (Math.abs(altError) > 0.5) {
+      this.altitude += clamp(altError * 0.05, -0.2, 0.2);
+    }
+
+    if (dist > 5) {
+      const speed = 12;
+      this.groundSpeed = speed;
+      const desiredHeading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+      this.heading = smoothHeading(this.heading, desiredHeading);
+
+      const headingRad = this.heading * DEG_TO_RAD;
+      this.latitude += (speed * Math.cos(headingRad) * 0.1) / METERS_PER_DEG_LAT;
+      this.longitude += (speed * Math.sin(headingRad) * 0.1) / (METERS_PER_DEG_LAT * Math.cos(this.latitude * DEG_TO_RAD));
+      this.throttle = 55;
+    } else {
+      // Close enough — loiter with small drift
+      this.groundSpeed = 8;
+      this.updateCruiseHeading(0.1);
+      this.throttle = 45;
+    }
+  }
+
+  private updateCruise(timeInSeconds: number): void {
+    // Altitude random walk bounded [50, 100]m AMSL
+    this.altitude += (Math.random() - 0.5) * 0.1;
+    this.altitude = clamp(this.altitude, this.vehicleState.homeAlt, this.vehicleState.homeAlt + 100);
 
     // Groundspeed random walk bounded [5, 25] m/s
-    this.groundSpeed += (Math.random() - 0.5) * 0.6;  // +-0.3
+    this.groundSpeed += (Math.random() - 0.5) * 0.6;
     this.groundSpeed = clamp(this.groundSpeed, 5, 25);
 
-    // Heading: figure-8 pattern
+    // Figure-8 heading pattern
     const baseHeading = (timeInSeconds * 15) % 360;
     const headingVariation = 30 * Math.sin(timeInSeconds * 0.5);
     this.heading = ((baseHeading + headingVariation) % 360 + 360) % 360;
 
     // Roll random walk bounded [-20deg, 20deg] in radians
-    this.roll += (Math.random() - 0.5) * 0.1;  // +-0.05 rad
+    this.roll += (Math.random() - 0.5) * 0.1;
     this.roll = clamp(this.roll, -20 * DEG_TO_RAD, 20 * DEG_TO_RAD);
 
     // Pitch random walk bounded [-15deg, 15deg] in radians
-    this.pitch += (Math.random() - 0.5) * 0.1;  // +-0.05 rad
+    this.pitch += (Math.random() - 0.5) * 0.1;
     this.pitch = clamp(this.pitch, -15 * DEG_TO_RAD, 15 * DEG_TO_RAD);
-
-    // Yaw follows heading
-    this.yaw = this.heading * DEG_TO_RAD;
 
     // GPS position update
     const headingRad = this.heading * DEG_TO_RAD;
@@ -360,9 +516,75 @@ export class SpoofByteSource implements IByteSource {
     this.throttle += Math.round((Math.random() - 0.5) * 10);
     this.throttle = clamp(this.throttle, 0, 100);
   }
+
+  private updateCruiseHeading(timeStep: number): void {
+    // Small circular drift when holding position
+    this.heading = (this.heading + 15 * timeStep) % 360;
+    const headingRad = this.heading * DEG_TO_RAD;
+    const latRad = this.latitude * DEG_TO_RAD;
+    this.latitude += (this.groundSpeed * Math.cos(headingRad) * 0.1) / METERS_PER_DEG_LAT;
+    this.longitude += (this.groundSpeed * Math.sin(headingRad) * 0.1) / (METERS_PER_DEG_LAT * Math.cos(latRad));
+  }
+
+  // -------------------------------------------------------------------
+  // Private: PX4 mode helpers
+  // -------------------------------------------------------------------
+
+  private computeBaseMode(): number {
+    const vs = this.vehicleState;
+    let mode = 0x01; // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+
+    if (vs.armed) {
+      mode |= 0x80; // MAV_MODE_FLAG_SAFETY_ARMED
+    }
+
+    const mainMode = (vs.customMode >> 16) & 0xff;
+
+    switch (mainMode) {
+      case 1: // MANUAL
+      case 5: // ACRO
+        mode |= 0x40; // MAV_MODE_FLAG_MANUAL_INPUT_ENABLED
+        break;
+      case 2: // ALTCTL
+      case 7: // STABILIZED
+        mode |= 0x10; // MAV_MODE_FLAG_STABILIZE_ENABLED
+        break;
+      case 3: // POSCTL
+        mode |= 0x10 | 0x08; // STABILIZE + GUIDED
+        break;
+      case 4: // AUTO
+        mode |= 0x04 | 0x08; // AUTO + GUIDED
+        break;
+      case 6: // OFFBOARD
+        mode |= 0x04 | 0x08; // AUTO + GUIDED
+        break;
+    }
+
+    return mode;
+  }
+
+  private computeClimbRate(): number {
+    switch (this.vehicleState.flightPhase) {
+      case 'takeoff': return 3;
+      case 'land': return -2;
+      case 'rtl': {
+        const rtlCruiseAlt = Math.max(this.vehicleState.homeAlt + 20, this.altitude);
+        return this.altitude < rtlCruiseAlt - 0.5 ? 2.5 : 0;
+      }
+      default: return 0;
+    }
+  }
 }
 
 /** Clamp a value to the range [min, max]. */
 function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+  return Math.max(min, Math.min(value, max));
+}
+
+/** Smoothly rotate current heading toward desired heading (degrees). */
+function smoothHeading(current: number, desired: number): number {
+  let diff = desired - current;
+  while (diff > 180) diff -= 360;
+  while (diff < -180) diff += 360;
+  return (current + clamp(diff, -5, 5) + 360) % 360;
 }

@@ -4,6 +4,9 @@ import { useLogViewerService, useSerialSessionController, isSerialSupported, isW
 import { STATUS_COLORS, type TimeWindow } from '../models';
 import SettingsModal from './SettingsModal';
 import InstallPrompt from './InstallPrompt';
+import ArmDisarmButton from './ArmDisarmButton';
+import FlightModeSelector from './FlightModeSelector';
+import GuidedActionsStrip from './GuidedActionsStrip';
 
 
 const TIME_WINDOW_OPTIONS: TimeWindow[] = [5, 10, 30, 60, 120, 300];
@@ -129,6 +132,21 @@ export default function Toolbar(props: ToolbarProps) {
               </span>
             </Show>
           </Show>
+        </Show>
+
+        {/* Arm/Disarm — only when connected and not in log playback */}
+        <Show when={isConnected() && !appState.logViewerState.isActive}>
+          <ArmDisarmButton />
+        </Show>
+
+        {/* Flight mode selector — only when connected and not in log playback */}
+        <Show when={isConnected() && !appState.logViewerState.isActive}>
+          <FlightModeSelector />
+        </Show>
+
+        {/* Guided actions — only when connected and not in log playback */}
+        <Show when={isConnected() && !appState.logViewerState.isActive}>
+          <GuidedActionsStrip />
         </Show>
 
         {/* Status dot */}
